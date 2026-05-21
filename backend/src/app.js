@@ -1,0 +1,21 @@
+import "./config/env.js";
+import cors from "cors";
+import express from "express";
+import chatRoutes from "./routes/chatRoutes.js";
+import { ingestDocuments } from "./rag/ingest.js";
+import { searchSimilarDocs } from "./rag/search.js";
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+app.use("/", chatRoutes);
+
+const startServer = async () => {
+    await ingestDocuments();  
+    app.listen(process.env.PORT, () => {
+        console.log(`Server running on port ${process.env.PORT}`);
+    });
+  };
+  
+startServer();
