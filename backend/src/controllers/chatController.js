@@ -8,8 +8,8 @@ RAG Service
 LLM Service 
 \* ################################ */
 
-import { getAnswer } from "../services/ragService.js";
-import { addMessage } from "../utils/memory.js";
+import { getAnswer } from "../services/vectorSearchService.js";
+import { addMessage } from "../config/memory.js";
 
 /**
  * Controls the chat between user and LLM

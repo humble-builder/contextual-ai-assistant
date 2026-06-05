@@ -1,7 +1,8 @@
+import { logger } from "../utils/logger.js";
+
 export const fuseSearchResults = ({
     vectorResults = [],
-    webResults = [],
-    queryType
+    webResults = []
 }) => {
 
     const fusedResults = [];
@@ -29,7 +30,7 @@ export const fuseSearchResults = ({
         let finalScore = result.score; // start with original web score
 
         // freshness boost for news/latest queries
-        if (queryType === "news") {
+        if (result.metadata.queryType === "news") {
             finalScore += 0.15;
         }
 
@@ -41,7 +42,11 @@ export const fuseSearchResults = ({
     });
 
     // Global ranking
-    return fusedResults
+    const topKFusedResults = fusedResults
         .toSorted((a, b) => b.finalScore - a.finalScore)
         .slice(0, 8);
+
+    if (process.env.DEBUG_FUSION === "true") logger.info("Top fused results:\n",topKFusedResults);
+
+    return topKFusedResults;
 };

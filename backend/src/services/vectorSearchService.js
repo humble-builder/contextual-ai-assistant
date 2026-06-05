@@ -10,11 +10,13 @@ build prompt
 LLM
 \* ################################ */
 
-import { getConversation } from "../utils/memory.js";
-import { searchSimilarDocs } from "../rag/search.js";
+import { getConversation } from "../config/memory.js";
+import { searchSimilarDocs } from "../retrieval/searchSimilarDocs.js";
 import { getLLMResponse } from "./llmService.js";
 import { searchWeb } from "./webSearchService.js";
-import { fuseSearchResults } from "../utils/fuseSearchResults.js";
+import { fuseSearchResults } from "../retrieval/fuseSearchResults.js";
+import { logger } from "../utils/logger.js";
+import { v4 as uuidv4 } from "uuid";
 
 /**
  * Service to perform RAG operations (search doc, retreive history, call LLM service)
@@ -40,21 +42,19 @@ export const getAnswer = async (message, userId) => {
      * Fallback to web search for better results
      * Fallback to generic LLM response if search fails
      */
-
-    console.log("Searching docs...");
     
     retreivedDocs.push(...await searchSimilarDocs(message)); // default vector search with cosine similarity
     const topScore = retreivedDocs.length > 0 ? retreivedDocs[0].score : 0;
-    console.log("Top retrieval score: ", topScore);
+    logger.info("Top retrieval score: ", topScore);
 
     const shouldUseWebSearch = topScore < 0.50; // use web search if document relevance is low
-    const shouldUseHybridSearch = topScore >= 0.50 && topScore < 0.75; // Optional: use web search alongside RAG for mid-range scores
+    const shouldUseHybridSearch = topScore >= 0.50 && topScore < 0.85; // Optional: use web search alongside RAG for mid-range scores
 
     const shouldRetrieveWeb = shouldUseWebSearch || shouldUseHybridSearch; // if we're doing hybrid or web-only search, we want to include web results in context
     const shouldRetrieveVector = !shouldUseWebSearch; // if we're doing hybrid or vector-only, we want to include vector results in context
     
     if (shouldRetrieveWeb) {
-        console.log("Low document retrieval confidence. Triggering web search...");
+        logger.info(`Document retrieval confidence is ${shouldUseWebSearch ? "low" : "average"}.`);
         webSearchResults.push(...await searchWeb(message)); // call web search service
     }
 
@@ -63,7 +63,7 @@ export const getAnswer = async (message, userId) => {
     
     // If web and vector search fail to provide relevant results, fallback to direct LLM response without context
     if (shouldUseWebSearch && (webSearchFailed || webSearchLowConfidence)) {
-        console.log("Web search yielded no results. Calling LLM...");
+        logger.info("Web search yielded no results.");
 
         prompt = buildPrompt(false, false, history, message, [], []); // build prompt without any context
         const fallbackReply = await getLLMResponse(prompt);
@@ -77,21 +77,29 @@ export const getAnswer = async (message, userId) => {
      */
 
     if (shouldRetrieveWeb && shouldRetrieveVector) {
-        console.log("Fusing vector and web search results...");
+        logger.info("Fusing document retrieval and web search results.");
         fusedResults.push(...fuseSearchResults({
             vectorResults: retreivedDocs,
-            webResults: webSearchResults,
-            queryType: shouldUseWebSearch ? "news" : "general" // Optional: could determine query type for better weighting
+            webResults: webSearchResults
         }));
-        console.log("Top fused result score: ", fusedResults[0]?.finalScore);
+        logger.info("Top fused result score: ", fusedResults[0]?.finalScore);
 
         // For hybrid approach, include fused results in the prompt
         prompt = buildPrompt(true,true,history,message,[],[],fusedResults);
-
     }
-    
+
+    if (process.env.DEBUG_THRESHOLD === "true") {
+        logger.info(`Debug logs for threshold tuning:\n
+        [use web search] = ${shouldUseWebSearch}
+        [use hybrid search] = ${shouldUseHybridSearch}
+        [original top vector score] = ${topScore}
+        [fused top score] = ${fusedResults[0]?.finalScore}
+        `);
+    }
+
     // If only vector results are relevant, include retreived documents in the prompt
     if (!shouldRetrieveWeb && shouldRetrieveVector) {
+        logger.info("High document retrieval confidence.")
         prompt = buildPrompt(true,false,history,message,retreivedDocs);
     }
 
@@ -100,14 +108,12 @@ export const getAnswer = async (message, userId) => {
         prompt = buildPrompt(false,true,history,message,[],webSearchResults);
     }
 
-    
-    console.log("Calling LLM...");
     const reply = await getLLMResponse(prompt);
 
     /**
      * Compile sources for traceability - where did the LLM's answer come from?
      * This is important for user trust and also for debugging/improving the system over time
-     * De-duplicate sources based on type and URL/source to avoid overwhelming the user
+     * De-duplicate sources based on content hash
      */
 
     if (shouldRetrieveVector) {   // Add vector search sources
@@ -123,13 +129,54 @@ export const getAnswer = async (message, userId) => {
 
     const uniqueSources = new Map();
     sources.forEach((item) => {
-        const key = `${item.type}-${item.source ?? item.url}`;
-        if (!uniqueSources.has(key)) {
-            uniqueSources.set(key, item);
+        if (!uniqueSources.has(item.hash)) {
+            uniqueSources.set(item.hash, item);
         }
     });
 
-    return { reply, sources: [...uniqueSources.values()] };
+    const groupSources = new Map();
+    uniqueSources.forEach((item) => {
+        if (item.sourceType === "vector") {
+            const chunkScore = {
+                number: item.chunk,
+                score: item.score
+            };
+            const key = `${item.sourceType}-${item.category}-${item.source}`;
+
+            if (!groupSources.get(key)) {
+                const newSourceObject = {
+                    "id": uuidv4(),
+                    "type": "vector",
+                    "source": item.source,
+                    "chunks": [chunkScore]
+                };
+                groupSources.set(key, newSourceObject);
+            }
+            
+            else groupSources.get(key).chunks.push(chunkScore);
+        }
+        else if (item.sourceType === "web") {
+            const key = `${item.sourceType}-${item.url}`;
+
+            if (!groupSources.get(key)) {
+                const newSourceObject = {
+                    "id": uuidv4(),
+                    "type": "web",
+                    "title": item.title,
+                    "url": item.url,
+                    "tags": [item.queryType]
+                };
+                groupSources.set(key, newSourceObject);
+            }
+
+            else groupSources.get(key).tags.push(item.queryType);
+        }
+    })
+
+    return {
+        reply,
+        sources: [...groupSources.values()]
+    };
 }
 
 /**

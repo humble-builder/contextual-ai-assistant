@@ -1,5 +1,7 @@
 import { tavily } from '@tavily/core';
-import { routeTavilyConfig } from '../utils/routeTavilyQuery.js';
+import { routeTavilyConfig } from '../routing/routeTavilyQuery.js';
+import { hashContent } from '../utils/hashContent.js'; 
+import { logger } from '../utils/logger.js';
 
 const client = tavily({
     apiKey: process.env.TAVILY_API_KEY,
@@ -16,10 +18,10 @@ export const searchWeb = async (query) => {
         console.log("Calling Tavily Web Search API...");
         const config = routeTavilyConfig(query);
         const searchResults = await client.search(query, config);
-        return normalizeWebResults(searchResults);
+        return normalizeWebResults(searchResults, config.topic);
 
     } catch (error) {
-        console.error("Web Search Error:", error.message);
+        logger.error("Web Search Error:", error.message);
         return [];
     }
 };
@@ -29,7 +31,7 @@ export const searchWeb = async (query) => {
  * @param {Object} searchResults - The raw search results returned by the Tavily API
  * @returns {Array} An array of normalized search result objects with content, score, and metadata
  */
-const normalizeWebResults = (searchResults) => {
+const normalizeWebResults = (searchResults, searchTopic) => {
     if (!searchResults?.results?.length) return [];
 
     return searchResults.results.map(result => ({
@@ -37,8 +39,10 @@ const normalizeWebResults = (searchResults) => {
         score: result.score,
         metadata: {
             title: result.title,
+            hash: hashContent(result.answer ?? result.content), // Generate a hash of the content for deduplication
             url: result.url,
-            type: "web"
+            sourceType: "web",
+            queryType: searchTopic
         }
     }));
 }
