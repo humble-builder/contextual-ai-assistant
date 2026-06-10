@@ -22,3 +22,20 @@ export interface Message {
   timestamp: Date;
   sources?: Array<SourceObject>
 }
+
+export interface ConversationHistoryItem {
+  conversationId: string;
+  title: string;
+  messages: Array<Pick<Message, "role" | "content">>;
+}
+
+export interface SessionHistoryItem {
+  sessionId: string;
+  sessionCreatedAt: number;
+  conversations: ConversationHistoryItem[];
+}
+
+export interface SessionObject {
+  sessionId: string;
+  sessionCreatedAt: number
+}

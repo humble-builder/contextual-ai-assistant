@@ -1,0 +1,1 @@
+export const GREETING_MESSAGE = "Hello Vishal 👋 How can I help you today?";

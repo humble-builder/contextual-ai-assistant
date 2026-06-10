@@ -1,26 +1,43 @@
-const conversations = {}; // would be DB reference in future
+import { updateChatHistory, deleteChatHistory } from "../database/updateHistory.js";
+import { getUserHistory, getConversationHistory } from "../database/readHistory.js";
+import { v4 as uuidv4} from "uuid";
 
-export const getConversation = (userId) => {
-    if (!conversations[userId]) {
-        conversations[userId] = [];
-    }
-    return conversations[userId];
-};
-
-export const addMessage = (userId, role, content) => {
-    const conversation = getConversation(userId);
-
-    conversation.push({ 
-        role,
-        content,
-        timestamp: Date.now()
-    });
-
-    if (conversation.length > 20) {
-        conversation.splice(0, 2);
-    }
+export const getConversation = async (query) => {
+    const { userId, sessionId, conversationId } = query;
+    const currentConversation = await getConversationHistory(userId, sessionId, conversationId);
+    return currentConversation;
 }
 
-export const clearConversation = (userId) => {
-    delete conversations[userId];
+export const readConversation = async (userId) => {
+    return await getUserHistory(userId);
+};
+
+export const addMessage = async (metadata, role, content) => {
+    const currentTimestamp = Date.now();
+    const currentMessage = {
+        role,
+        content,
+        messageId: uuidv4(),
+        createdAt: currentTimestamp
+    };
+
+    const currentConversation = await getConversation(metadata);
+    if (!currentConversation.length) {
+        metadata.conversationCreatedAt = currentTimestamp
+    }
+    else {
+        const latestMessage = currentConversation[currentConversation.length - 1];
+        metadata.conversationCreatedAt = latestMessage.conversationCreatedAt;
+    }
+
+    await updateChatHistory({metadata, currentMessage});
+}
+
+export const deleteConversation = async (userId, sessionId, conversationId) => {
+    const deletedCount = await deleteChatHistory({userId, sessionId, conversationId});
+    if (!deletedCount) {
+        throw new Error("No conversation found");
+    }
+
+    return deletedCount;
 }
