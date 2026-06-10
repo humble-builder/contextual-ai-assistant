@@ -20,13 +20,13 @@ import { v4 as uuidv4 } from "uuid";
 
 /**
  * Service to perform RAG operations (search doc, retreive history, call LLM service)
- * @param {*} message User message or query
- * @param {*} userId Unique user identifier
+ * @param {*} request Request body from the controller
  * @returns LLM response back to controller
  */
 
-export const getAnswer = async (message, userId) => {
+export const getAnswer = async (query) => {
 
+    const { message } = query;
     const webSearchResults = [];
     const retreivedDocs = [];
     const fusedResults = [];
@@ -34,8 +34,15 @@ export const getAnswer = async (message, userId) => {
     const sources = [];
 
     // Retreive conversation history for the user to provide context to the LLM
-    const conversation = getConversation(userId);
-    const history = conversation.slice(-6);
+    const conversation = await getConversation(query);
+    let history = [];
+    
+    if (conversation.length) {
+        history = conversation.map((message) => ({
+            role: message.role,
+            content: message.content
+        })).slice(-6);
+    }
     
     /** 
      * Get the top K documents relevant to user query
@@ -188,6 +195,61 @@ export const getAnswer = async (message, userId) => {
  * @param {*} webResults web search results to include in prompt
  * @param {*} fusedResults fused search results to include in prompt
  */
+
+const buildPrompt = (useVector, useWeb, history, message, vectorResults, webResults, fusedResults) => {
+    
+    const pastContext = history.length
+        ? history.map((item) => ({role: item.role, content: item.content}))
+        : [];
+    const prompt = [];
+    
+    if (!useVector && !useWeb) {
+        prompt.push({
+            role: "system",
+            content: "You are a helpful and friendly AI assistant."
+        });
+
+        if (pastContext.length) {
+            prompt.push(...pastContext);
+        }
+
+        prompt.push({
+            role: "user",
+            content: message
+        })
+
+        return prompt;
+    }
+
+    const context = buildContext(useVector, useWeb, vectorResults, webResults, fusedResults);
+
+    prompt.push({
+        role: "system",
+        content: `
+            You are a helpful insurance assistant.
+
+            Use the provided context whenever relevant.
+
+            If the context contains the answer, prioritize it.
+            Otherwise, respond conversationally and naturally.
+
+            Context:
+                ${context}
+        `
+    });
+
+    if (pastContext.length) {
+        prompt.push(...pastContext);
+    }
+
+    prompt.push({
+        role: "user",
+        content: message
+    });
+
+    return prompt;
+}
+
 const buildContext = (useVector, useWeb, vectorResults, webResults, fusedResults) => {
     let context = "";
 
@@ -219,41 +281,3 @@ const buildContext = (useVector, useWeb, vectorResults, webResults, fusedResults
     return context;
 }
 
-const buildPrompt = (useVector, useWeb, history, message, vectorResults, webResults, fusedResults) => {
-    if (!useVector && !useWeb) {
-        return [ // simple prompt with just user message and history
-            {
-                role: "system",
-                content: "You are a helpful and friendly AI assistant."
-            },
-            ...history,
-            {
-                role: "user",
-                content: message
-            }
-        ];
-    }
-    const context = buildContext(useVector, useWeb, vectorResults, webResults, fusedResults);
-    const prompt = [
-        {
-            role: "system",
-            content: `
-                You are a helpful insurance assistant.
-
-                Use the provided context whenever relevant.
-
-                If the context contains the answer, prioritize it.
-                Otherwise, respond conversationally and naturally.
-
-                Context:
-                    ${context}
-            `
-        },
-        ...history,
-        {
-            role: "user",
-            content: message
-        }
-    ]
-    return prompt;
-}
